@@ -1,0 +1,3 @@
+/home/mofg/ML/OD_to_Main/test/camera/CMakeFiles/test.dir
+/home/mofg/ML/OD_to_Main/test/camera/CMakeFiles/edit_cache.dir
+/home/mofg/ML/OD_to_Main/test/camera/CMakeFiles/rebuild_cache.dir
