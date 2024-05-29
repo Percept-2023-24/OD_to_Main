@@ -1,20 +1,6 @@
 using namespace std;
 using namespace cv;
 using namespace std::chrono;
-
-#define FAST_TIME 512 //Initializes the number of fast time samples | # of range samples
-#define SLOW_TIME 64 //Initializes the number of slow time samples | # of doppler samples
-#define RX 4        // # of Rx
-#define TX 3        // # of Tx
-#define IQ 2 //Types of IQ (I and Q) 
-#define SIZE_W_IQ TX*RX*FAST_TIME*SLOW_TIME*IQ  // Size of the total number of separate IQ sampels from ONE frame
-#define SIZE TX*RX*FAST_TIME*SLOW_TIME          // Size of the total number of COMPLEX samples from ONE frame
-
-#define BUFFER_SIZE 2048 
-#define PORT        4098
-#define BYTES_IN_PACKET 1456 // Max packet size - sequence number and byte count = 1466-10 
-
-#define IQ_BYTES 2 
 // Base class used for other modules
 class RadarBlock
 {
@@ -28,8 +14,6 @@ class RadarBlock
 
         uint* inputframeptr;
         float* inputbufferptr;
-	float* inputangbufferptr;
-	int* inputangindexptr;
 
         uint lastframe;
 
@@ -56,16 +40,6 @@ class RadarBlock
         void setBufferPointer(float* ptr)
         {
             inputbufferptr = ptr;
-        }
-
-	void setAngleBufferPointer(float* ptr)
-        {
-            inputangbufferptr = ptr;
-        }
-
-	void setAngleIndexPointer(int* ptr)
-        {
-            inputangindexptr = ptr;
         }
 
         // Sets the input frame pointer
@@ -146,7 +120,6 @@ class RadarBlock
         }
 };
 
-// 1024 x 600
 // Visualizes range-doppler data
 class Visualizer : public RadarBlock
 {
@@ -155,143 +128,86 @@ class Visualizer : public RadarBlock
     int height = 512;
 
     int px_width = 10;
-    int px_height = 2;
+    int px_height = 1;
 
     float X_SCALE = 0.16;
     float Y_SCALE = 0.035;
     int stepSizeX = 64;
-    int stepSizeY = 57; 
-    int borderSize = 60;
-    int borderLeft = 220;
-    int borderRight = borderLeft;
-    int borderBottom = 60;
-    int AXES_COLOR = 169;
-    int frame;
+    int stepSizeY = 57;
 
     public:
         Visualizer(int size_in, int size_out, bool verbose = false) : RadarBlock(size_in, size_out, verbose), 
-            image(px_height * height/2, px_width * width, CV_8UC1, Scalar(255))
+            image(px_height * height, px_width * width, CV_8UC1, Scalar(255))
         {
-            frame = 1;
-            namedWindow("Image",WINDOW_NORMAL);
-            setWindowProperty("Image", WND_PROP_FULLSCREEN, WINDOW_FULLSCREEN);
-
+            
+            namedWindow("Image");
         }
 
         // Visualizer's process
         void process() override
         {
             auto start = chrono::high_resolution_clock::now();
-            
-            if(frame <= 1){
-                cv::Scalar borderColor(0, 0, 0); 
-
-                // Add the padded border
-                // TOP | BOTTOM | LEFT | RIGHT
-                cv::copyMakeBorder(image, borderedImage, borderSize, borderSize, borderLeft, borderRight,
-                                cv::BORDER_CONSTANT, borderColor);
-
-                cv::Point xEnd(borderedImage.cols-borderLeft, borderedImage.rows-borderSize);
-                cv::Point yEnd(borderLeft, borderSize);
-                cv::Point origin(borderLeft, borderedImage.rows-borderSize);
-                cv::line(borderedImage, origin, xEnd, cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 2);
-                cv::line(borderedImage, origin, yEnd, cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 2);
-                
-                std::string label_x = "-           Velocity           +";
-
-                int fontFace = cv::FONT_HERSHEY_SIMPLEX;
-                double fontScale = 1.0;
-                int thickness = 4;
-                int baseline = 0;
-
-                cv::Size textSize = cv::getTextSize(label_x, fontFace, fontScale, thickness, &baseline);
-                //cv::Point textPosition_x((image.cols - textSize.width)/2, image.rows - baseline - 10);
-                //madness begins here
-                cv::Point textPosition_x((borderedImage.cols-textSize.width)/2, borderedImage.rows-10);
-                cv::Point textPosition_r(borderLeft - 65, (borderedImage.rows-60)/2);
-                cv::Point textPosition_a(borderLeft - 65, (borderedImage.rows-60+(textSize.height+20))/2);
-                cv::Point textPosition_n(borderLeft - 65, (borderedImage.rows-60+2*(textSize.height+20))/2);
-                cv::Point textPosition_g(borderLeft - 65, (borderedImage.rows-60+3*(textSize.height+20))/2);
-                cv::Point textPosition_e(borderLeft - 65, (borderedImage.rows-60+4*(textSize.height+24))/2);
-
-                cv::putText(borderedImage, label_x, textPosition_x, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-                cv::putText(borderedImage, "R", textPosition_r, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-                cv::putText(borderedImage, "a", textPosition_a, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-                cv::putText(borderedImage, "n", textPosition_n, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-                cv::putText(borderedImage, "g", textPosition_g, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-                cv::putText(borderedImage, "e", textPosition_e, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-	        //cv::Point textPosition_ang(borderLeft - 200, (borderedImage.rows-60+4*(textSize.height+24))/2);
-	        //cv::putText(borderedImage, "F", textPosition_ang, fontFace, fontScale, cv::Scalar(169, 169, 169), thickness);
-		cv::Point textPosition_angtxt(borderLeft + 650, (borderedImage.rows-60+2*(textSize.height+20))/2);
-		cv::putText(borderedImage, "Est. Angle: ", textPosition_angtxt, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(169, 169, 169), 2);
-
-                for (int i = origin.x; i <= borderedImage.cols - borderRight; i += stepSizeX) {
-                    std::ostringstream stream;
-                    stream << std::fixed << std::setprecision(0) << ((i - origin.x) - width*px_width/2)*X_SCALE/px_width;
-                    cv::Point pt(i, origin.y);
-                    cv::line(borderedImage, pt, pt - cv::Point(0, 5), cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 5);
-                    cv::putText(borderedImage, stream.str(), pt + cv::Point(-10, 20),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 2);
-                }
-                for (int i = origin.y - borderSize; i >= 0; i -= stepSizeY) {
-                    std::ostringstream stream;
-                    stream << std::fixed << std::setprecision(0) << (origin.y - i)*Y_SCALE/2;
-                    cv::Point pt(origin.x, i);
-                    cv::line(borderedImage, pt, pt + cv::Point(5, 0), cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 5);
-                    cv::putText(borderedImage, stream.str(), pt + cv::Point(-30, 10),
-                                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(AXES_COLOR, AXES_COLOR, AXES_COLOR), 2);
-                }
-            }
-            int half_offset = 0;
-            if(true)
-                half_offset = height/2;
-
-	    cv::Size textSize = cv::getTextSize("-           Velocity           +", cv::FONT_HERSHEY_SIMPLEX, 1.0, 4, 0);
-	    cv::Point textPosition_slow(borderLeft + 650, (borderedImage.rows-60+4*(textSize.height+24))/2);
-	    cv::Point textPosition_fast(borderLeft + 650, (borderedImage.rows-60+6*(textSize.height+24))/2);
-	    cv::line(borderedImage, textPosition_slow - cv::Point(150, 0), textPosition_slow + cv::Point(150, 0), cv::Scalar(0, 0, 0), 100);
-	    float anglefloat = *inputangbufferptr;
-	    int cfar_slow = *inputangindexptr/FAST_TIME;
-	    int cfar_fast = *inputangindexptr%FAST_TIME;
-	    setprecision(1);
-	    std::string anglestr = to_string(anglefloat);
-	    std::string slow_str = to_string(cfar_slow);
-	    std::string fast_str = to_string(cfar_fast);
-	    cv::putText(borderedImage, anglestr, textPosition_slow, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(169, 169, 169), 2);
-	    //cv::putText(borderedImage, slow_str, textPosition_slow, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(169, 169, 169), 2);
-	    //cv::putText(borderedImage, fast_str, textPosition_fast, cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(169, 169, 169), 2);
-            
-            //took j to height/2 to height in order to cut Range on RDM in half
+            // 
             for (int i = 0; i < width; i++) {
-                for (int j = half_offset; j < height; j++) {
+                for (int j = 0; j < height; j++) {
                     for(int x = 0; x < px_width; x++) {
                         for(int y = 0; y < px_height; y++) {
-                            borderedImage.at<uint8_t>(px_height * (j-height/2) + y + borderSize, px_width * i + x + borderLeft) = static_cast<uint8_t>(inputbufferptr[width*(height) - ((width-1)*height - height * i + j)]);
+                            image.at<uint8_t>(px_height * j + y, px_width * i + x) = static_cast<uint8_t>(inputbufferptr[width*height - ((width-1)*height - height * i + j)]);
                         }
                     }
                 }
             }
-	    cv::Point detection1(borderLeft + cfar_slow*px_width - px_width, borderedImage.rows - borderSize - (cfar_fast*px_height - px_height) );
-	    cv::Point detection2(borderLeft + cfar_slow*px_width, borderedImage.rows - borderSize - cfar_fast*px_height);
-	    cv::Point test1(100, 500);
-	    cv::Point test2(120, 520);
-	    cv::rectangle(borderedImage, detection1, detection2, Scalar(169,169,169), 3);
-	    //cv::circle(borderedImage, test1, 20, cv::Scalar(169,169,169));
-            //cv::Rect roi(100, 80, 120, 100);
-	    //cv::rectangle(borderedImage, roi, cv::Scalar(169,169,169));
-            // cv::Rect roi(borderLeft, borderedImage.row - borderSize, px_width*width, px_height*height);
-            //cv::Mat roiImage = borderedImage(roi);
+            
             // Convert the matrix to a color image for visualization
-            applyColorMap(borderedImage, colorImage, COLORMAP_JET);
+            Mat colorImage;
+            applyColorMap(image, colorImage, COLORMAP_JET);
+            
+            int borderSize = 30;
+            cv::Scalar borderColor(0, 0, 0); // Green color
+
+            // Add the padded border
+            cv::Mat borderedImage;
+            cv::copyMakeBorder(colorImage, borderedImage, borderSize, borderSize, borderSize, borderSize,
+                            cv::BORDER_CONSTANT, borderColor);
+
+            cv::Point origin(borderSize, borderedImage.rows-borderSize);
+            cv::Point xEnd(borderedImage.cols-borderSize, borderedImage.rows-borderSize);
+            cv::Point yEnd(borderSize, borderSize);
+            
+            cv::line(borderedImage, origin, xEnd, cv::Scalar(0, 0, 255), 2);
+            cv::line(borderedImage, origin, yEnd, cv::Scalar(0, 255, 0), 2);
+            
+            //cv::putText(borderedImage, "m/s", xEnd, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 2);
+            //cv::putText(borderedImage, "m", yEnd, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 255, 0), 2);
+            
+            
+            for (int i = origin.x + stepSizeX; i < borderedImage.cols; i += stepSizeX) {
+                std::ostringstream stream;
+                stream << std::fixed << std::setprecision(0) << ((i - origin.x) - width*px_width/2)*X_SCALE/px_width;
+                cv::Point pt(i, origin.y);
+                cv::line(borderedImage, pt, pt - cv::Point(0, 5), cv::Scalar(255, 255, 255), 2);
+                cv::putText(borderedImage, stream.str(), pt + cv::Point(-10, 20),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+            }
+            for (int i = origin.y - stepSizeY; i >= 0; i -= stepSizeY) {
+                std::ostringstream stream;
+                stream << std::fixed << std::setprecision(0) << (origin.y - i)*Y_SCALE;
+                cv::Point pt(origin.x, i);
+                cv::line(borderedImage, pt, pt + cv::Point(5, 0), cv::Scalar(255, 255, 255), 2);
+                cv::putText(borderedImage, stream.str(), pt + cv::Point(-30, 10),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+            }
+
+
+
             // Display the color image
-            imshow("Image", colorImage);
+            imshow("Image", borderedImage);
 
             // Waits 1ms
             waitKey(wait_time);
             auto stop = chrono::high_resolution_clock::now();
             auto duration_vis_process = duration_cast<microseconds>(stop - start);
             std::cout << "VIS Process Time " << duration_vis_process.count() << " microseconds" << std::endl;
-            frame ++;
             
         }
 
@@ -306,8 +222,6 @@ class Visualizer : public RadarBlock
 
     private:
         Mat image;
-        Mat borderedImage;
-        Mat colorImage;
         int wait_time;
         
 };
@@ -316,27 +230,23 @@ class Visualizer : public RadarBlock
 class RangeDoppler : public RadarBlock
 {
     public:
-        RangeDoppler(const char* win = "blackman") : RadarBlock(SIZE,SIZE)
+        RangeDoppler(int fast_time, int slow_time, int rx, int tx, int iq, const char* win = "blackman") : RadarBlock(fast_time*slow_time,fast_time*slow_time)
         {
             // RANGE DOPPLER PARAMETER INITIALIZATION
-            WINDOW_TYPE = win;          //Determines what type of windowing will be done
-            SET_SNR = false;
+            WINDOW_TYPE = win;          //Determines what type of windowing will be cone
+            FAST_TIME = fast_time;      //Initializes the number of fast time samples | # of range samples
+            SLOW_TIME = slow_time;      //Initializes the number of slow time samples | # of doppler samples
+            RX = rx;    // # of Rx
+            TX = tx;    // # of Tx
+            IQ = iq;    // Equals to 2 as there is both I and Q data
+            SIZE = TX*RX*FAST_TIME*SLOW_TIME;           // Size of the total number of COMPLEX samples from ONE frame
+            SIZE_W_IQ = TX*RX*FAST_TIME*SLOW_TIME*IQ;   // Size of the total number of separate IQ sampels from ONE frame
             adc_data_flat = reinterpret_cast<float*>(malloc(SIZE_W_IQ*sizeof(float)));                          // allocate mem for Separate IQ adc data from Data aquisition
             adc_data=reinterpret_cast<std::complex<float>*>(adc_data_flat);                                     // allocate mem for COMPLEX adc data from Data aquisition 
             adc_data_reshaped = reinterpret_cast<float*>(malloc(SIZE_W_IQ*sizeof(float)));                      // allocate mem for reorganized/reshaped adc data
             rdm_data = reinterpret_cast<std::complex<float>*>(malloc(SIZE * sizeof(std::complex<float>)));      // allocate mem for processed complex adc data
             rdm_norm = reinterpret_cast<float*>(malloc(SIZE * sizeof(float)));                                  // allocate mem for processed magnitude adc data
             rdm_avg = reinterpret_cast<float*>(calloc(SLOW_TIME*FAST_TIME, sizeof(float)));                     // allocate mem for averaged adc data across all virtual antennas
-	    prev_rdm_avg = reinterpret_cast<float*>(calloc(SLOW_TIME*FAST_TIME, sizeof(float))); // Previous frame allocation
-	    zero_rdm_avg = reinterpret_cast<float*>(calloc(SLOW_TIME*FAST_TIME, sizeof(float))); // rdm avg but with 0 doppler removed
-
-	    cfar_cube = reinterpret_cast<float*>(calloc(SLOW_TIME*FAST_TIME, sizeof(float)));
-	    angle_data = reinterpret_cast<std::complex<float>*>(calloc(96, sizeof(std::complex<float>)));
-	    angfft_data = reinterpret_cast<std::complex<float>*>(calloc(96, sizeof(std::complex<float>)));
-	    angle_norm = reinterpret_cast<float*>(malloc(96 * sizeof(float)));
-	    final_angle = reinterpret_cast<float*>(malloc(1 * sizeof(float)));
-	    cfar_max = reinterpret_cast<int*>(malloc(1 * sizeof(int)));
-
             
             // FFT SETUP PARAMETERS
             const int rank = 2;     // Determines the # of dimensions for FFT
@@ -350,224 +260,11 @@ class RangeDoppler : public RadarBlock
                                 reinterpret_cast<fftwf_complex*>(adc_data), n, istride, idist,
                                 reinterpret_cast<fftwf_complex*>(rdm_data), n, ostride, odist,
                                 FFTW_FORWARD, FFTW_ESTIMATE);      // create the FFT plan
-
-	    const int rank2 = 2;     // Determines the # of dimensions for FFT
-	    const int n2[] = {6, 16};
-	    const int howmany2 = 1;
-	    const int idist2 = 0;
-	    const int odist2 = 0;
-	    const int istride2 = 1;
-	    const int ostride2 = 1;
-	    plan2 = fftwf_plan_many_dft(rank2, n2, howmany2,
-		                reinterpret_cast<fftwf_complex*>(angle_data), n2, istride2, idist2,
-		                reinterpret_cast<fftwf_complex*>(angfft_data), n2, ostride2, odist2,
-		                FFTW_FORWARD, FFTW_ESTIMATE);      // create the FFT plan
-
-	    int frame = 1;
-	    int maxidx = 0;
         }
-
-	void remove_zero_dop(float* rdm_avg, float* zero_rdm_avg) {
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		zero_rdm_avg[i] = rdm_avg[i];
-            }
-	    for(int i=32; i<34; i++) {
-		for(int j=0; j<FAST_TIME; j++) {
-		    int idx = i*FAST_TIME + j;
-		    zero_rdm_avg[idx] = 0;
-                }
-            }
-
-	    //31-34 doppler frames need to be 0 out of 64, 
-	}
-
-
-	int compute_angle_est() {
-	    fftwf_execute(plan2);
-	    return 0;
-	}
-
-	int compute_angmag_norm(std::complex<float>* rdm_complex, float* rdm_magnitude) {
-	    float norm, log;
-	    std::complex<float> val; 
-	    for(int i=0; i<96; i++) {
-		val=rdm_complex[i];
-		norm=std::norm(val);
-		log=log2f(norm)/2.0f;
-		rdm_magnitude[i]=log;
-	    }         
-	    return 0;
-	}
-
-	
-	void find_azimuth_angle(float* angle_norm, float* final_angle) {
-	    float step = 180/16;
-	    float data[16];
-	    for(int i=0; i<16; i++) {
-		data[i] = angle_norm[48+i];
-	    }
-	    float max = *std::max_element(data, data + 16);
-	    for(int i=0; i<16; i++) {
-		if(angle_norm[48+i] == max) {
-		    final_angle[0] = step*i; // add -90 if you want fft shift
-		}
-	    }
-	}
-
-
-	float* getAngleBufferPointer()
-	{
-	    return final_angle; // find_azimuth_angle(angle_norm);
-	}
-
-	int* getAngleIndexPointer()
-	{
-	    return cfar_max; // find_azimuth_angle(angle_norm);
-	}
-
-	// Still need to fix this fftshift issue
-	void fftshift_ang_est(float* arr){
-	    int midRow = 16 / 2;
-	    int midColumn = 6 / 2;
-	    float fftshifted[96];
-	    
-	    for (int i = 0; i < 16; i++) {
-		for (int j = 0; j < 6; j++) {
-		    int newRow = (i + midRow) % 16;          // ROW WISE FFTSHIFT
-		    int newColumn = (j + midColumn) % 6;    // COLUMN WISE FFTSHIFT
-		    fftshifted[newRow * 6 + j] = arr[i * 6 + j]; // only newRow is used so only row wise fftshift
-		}
-	    }
-	    for(int i = 0; i < 96; i++)
-		arr[i] = fftshifted[i];
-	}
-
-/*
-        void fftshift_rdm(float* arr){
-            int midRow = FAST_TIME / 2;
-            int midColumn = SLOW_TIME / 2;
-            float fftshifted[SLOW_TIME*FAST_TIME];
-           
-            for (int i = 0; i < FAST_TIME; i++) {
-                for (int j = 0; j < SLOW_TIME; j++) {
-                    int newRow = (i + midRow) % FAST_TIME;          // ROW WISE FFTSHIFT
-                    int newColumn = (j + midColumn) % SLOW_TIME;    // COLUMN WISE FFTSHIFT
-                    fftshifted[newRow * SLOW_TIME + j] = arr[i * SLOW_TIME + j]; // only newRow is used so only row wise fftshift
-                }
-            }
-            for(int i = 0; i < FAST_TIME*SLOW_TIME; i++)
-                arr[i] = fftshifted[i];
-        }
-*/
-/*
-	int cfar_matrix(float* rdm_avg, float* prev_rdm_avg, float* cfar_cube) {
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		cfar_cube[i] = rdm_avg[i] - prev_rdm_avg[i];
-	    }
-	    float max = *std::max_element(cfar_cube, cfar_cube + SLOW_TIME*FAST_TIME);
-	    float threshold = max;
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		if (cfar_cube[i] >= threshold) {
-		    cfar_cube[i] = 1;
-		    return i;
-		}
-		else {
-		    cfar_cube[i] = 0;
-		}
-	    }
-	}
-*/
-	int cfar_matrix(float* rdm_avg, float* prev_rdm_avg, float* cfar_cube) {
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		cfar_cube[i] = rdm_avg[i] - prev_rdm_avg[i];
-	    }
-	    float max = *std::max_element(cfar_cube, cfar_cube + SLOW_TIME*FAST_TIME);
-	    float threshold = max;
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		if (cfar_cube[i] >= threshold) {
-		    cfar_cube[i] = 1;
-		    return i;
-		}
-		else {
-		    cfar_cube[i] = 0;
-		}
-	    }
-	}
-	
-/*
-	int cfar_matrix(float* rdm_avg, float* cfar_cube) {
-
-	    float MNF = mean_noise_rdm(rdm_avg);
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		cfar_cube[i] = rdm_avg[i] - MNF;
-	    }
-	    float max = *std::max_element(cfar_cube, cfar_cube + SLOW_TIME*FAST_TIME);
-	    float threshold = max/2;
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		if (cfar_cube[i] >= threshold) {
-		    cfar_cube[i] = 1;
-		    return i;
-		}
-		else {
-		    cfar_cube[i] = 0;
-		}
-	    }
-
-	}
-
-*/
-	void getADCindices(int index_1D, int* indices) {
-	    const int RD_bins = SLOW_TIME*FAST_TIME;
-	    for(int i=0; i<TX*RX; i++) {
-		indices[i] = i*RD_bins + index_1D;
-	    }
-	}
-
-
-	float mean_noise_rdm(float* rdm_avg) {
-	    float MNF = 0;
-	    for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		MNF = MNF + rdm_avg[i];
-	    }
-	    MNF = MNF/(SLOW_TIME*FAST_TIME);
-	    return MNF;
-	}
-
-
-	void shape_angle_data(float* rdm_avg, float* prev_rdm_avg, float* cfar_cube, std::complex<float>* adc_data, std::complex<float>* angle_data, int* cfar_max) {
-
-	    cfar_max[0] = cfar_matrix(rdm_avg, prev_rdm_avg, cfar_cube);
-	    int maxidx = cfar_max[0];
-	    std::cout << "max index: " << maxidx%FAST_TIME << std::endl;
-
-	    int indices[12] = {0};
-	    getADCindices(maxidx, indices);
-
-	    for(int i=0; i<32; i++) {
-		angle_data[i] = 0;
-		angle_data[i+64] = 0;
-	    }
-	    for(int i=0; i<16; i++) {
-		if(i<6 || i>9) {
-		    angle_data[i+32] = 0;
-		}
-		else {
-		    angle_data[i+32] = adc_data[indices[8 + (i-6)]];
-		}
-		if(i<4 || i>11) {
-		    angle_data[i+48] = 0;
-		}
-		else {
-		    angle_data[i+48] = adc_data[indices[0 + (i-4)]];
-		}
-	    }
-
-	}
-
         // Retrieve outputbuffer pointer
         float* getBufferPointer()
         {
-            return zero_rdm_avg;
+            return rdm_avg;
         }
 
         void setBufferPointer(uint16_t* arr){
@@ -575,19 +272,19 @@ class RangeDoppler : public RadarBlock
         }
 
         // FILE READING METHODS
-        void readFile(const std::string& filename) {      //
+        void readFile(const std::string& filename, float* arr, int size) {      //
             std::ifstream file(filename);
             if (file.is_open()) {
                 std::string line;
                 
                 int i = 0;
                 while (std::getline(file, line)) {
-                    if(i > SIZE_W_IQ){
+                    if(i > size){
                         std::cerr << "Error: More samples than SIZE " << filename << std::endl;
                         break;
                     }
                     float value = std::stof(line);
-                    adc_data_flat[i] = value;
+                    arr[i] = value;
                     i++;
                 }
                 std::cout << "File Successfully read!" << std::endl;
@@ -595,6 +292,20 @@ class RangeDoppler : public RadarBlock
             } else {
                 std::cerr << "Error: Could not open file " << filename << std::endl;
             }
+        }
+
+        int save_2d_array(float* arr, int width, int length, const char* filename) {
+            std::ofstream outfile(filename);
+            for (int i=0; i<length; i++) {
+                for (int j=0; j<width; j++) {
+                outfile << arr[i*width+j] << " ";
+                }
+                outfile << std::endl;
+            }
+
+            //outfile.close();
+            std::cout << "Array saved to file. " << std::endl;
+            return 0;
         }
 
         int save_1d_array(float* arr, int width, int length, string& filename) {
@@ -607,7 +318,7 @@ class RangeDoppler : public RadarBlock
             std::cout << "Array saved to file. " << std::endl;
             return 0;
         }
-        
+
         // WINDOW TYPES
         void blackman_window(float* arr, int fast_time){
             for(int i = 0; i<fast_time; i++)
@@ -624,13 +335,9 @@ class RangeDoppler : public RadarBlock
                 arr[i] = 1;
         }
         
-        void setSNR(float maxSNR, float minSNR){
-            SET_SNR = true;
-            max = maxSNR;
-            min = minSNR;
-        }
         // output indices --> {IQ, FAST_TIME, SLOW_TIME, RX, TX}
         void getIndices(int index_1D, int* indices){
+            int iq=2;  
             int i0 = index_1D/(RX*IQ*FAST_TIME*TX);
             int i1 = index_1D%(RX*IQ*FAST_TIME*TX);
             int i2 = i1%(RX*IQ*FAST_TIME);
@@ -684,8 +391,6 @@ class RangeDoppler : public RadarBlock
             // fill in the matrix with the values scaled to 0-255 range
             for (int i = 0; i < FAST_TIME*SLOW_TIME; i++) {
                 arr[i] = (arr[i] - min_val) / (max_val - min_val) * 255;
-                if (arr[i] < 0)
-                    arr[i] = 0; 
             }
         }
 
@@ -721,21 +426,18 @@ class RangeDoppler : public RadarBlock
             int idx;
             const int VIRT_ANTS = TX*RX;
             const int RD_BINS = SLOW_TIME*FAST_TIME;
-            if(!SET_SNR){
-                float max, min;
-            }
+            float max,min;
             for (int i=0; i<(VIRT_ANTS); i++) {
                 for (int j=0; j<(RD_BINS); j++) {
                     idx=i*(RD_BINS)+j;
                     if(i==0)
                         rdm_avg[j] = 0;
                     rdm_avg[j]+=rdm_norm[idx]/((float) RD_BINS);
-                    if(i == (VIRT_ANTS-1) && !SET_SNR){
+                    if(i == (VIRT_ANTS-1)){
                         if (j==0){
                             max = rdm_avg[0];
                             min =  rdm_avg[0];                            
                         }
-
                         if (rdm_avg[j] > max)
                             max = rdm_avg[j];
                         else if(rdm_avg[j] < min)
@@ -744,7 +446,8 @@ class RangeDoppler : public RadarBlock
                     }
                 }
             }
-
+            max = 0.0108;
+            min = 0.008;
             //std::cout << "MAX: " << max << "      |        MIN:  " << min << std::endl;
             
             scale_rdm_values(rdm_avg, max, min);
@@ -754,52 +457,40 @@ class RangeDoppler : public RadarBlock
         
         void process() override
         {
-            // auto start = chrono::high_resolution_clock::now();
+            auto start = chrono::high_resolution_clock::now();
+            // std::cout<< "RDM PROCESS ACTIVATED" << std::endl;
             for(int i = 0; i<SIZE_W_IQ; i++){
                 adc_data_flat[i] = (float)input[i];
+                // if( i>90 && i<110)
+                    // std::cout<< adc_data_flat[i] << "   |    " << input[i] << std::endl;
             }
-	    if (frame <=1) {
-		for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		    prev_rdm_avg[i] = 0;
-	        }
-	    }
-	    else {
-		for(int i=0; i<SLOW_TIME*FAST_TIME; i++) {
-		    prev_rdm_avg[i] = zero_rdm_avg[i];
-	        }
-	    }
+            // auto start = high_resolution_clock::now();
+            // std::cout << "1: IN RDM: First data in frame = " << adc_data_flat[100] << std::endl;
             shape_cube(adc_data_flat, adc_data_reshaped, adc_data);
             compute_range_doppler();
             compute_mag_norm(rdm_data, rdm_norm);
             averaged_rdm(rdm_norm, rdm_avg);
-	    remove_zero_dop(rdm_avg, zero_rdm_avg);
-	    shape_angle_data(zero_rdm_avg, prev_rdm_avg, cfar_cube, adc_data, angle_data, cfar_max);
-	    compute_angle_est();
-	    compute_angmag_norm(angfft_data, angle_norm);
-	    //fftshift_ang_est(angle_norm);
-	    find_azimuth_angle(angle_norm, final_angle);
-	    
-
+            // std::cout << "rdm_data = " << rdm_data[100] << "     |       rdm_norm = " << rdm_norm[100] << "   |    rdm_avg = " << rdm_avg[100] << std::endl;
+            // std::cout << "3: IN RDM: First data in frame = " << adc_data_flat[100] << std::endl;
             // string str = ("./out") + to_string(frame) + ".txt";
             // save_1d_array(rdm_avg, FAST_TIME, SLOW_TIME, str);
+            // auto stop = high_resolution_clock::now();
+            // auto duration = duration_cast<microseconds>(stop - start);
+            // std::cout << "Elapsed PROCESS time: " << duration.count() << " microseconds" << std::endl;
+            // printf("Range-Doppler map done! \n");
 
-            // auto stop = chrono::high_resolution_clock::now();
-            // auto duration_rdm_process = duration_cast<microseconds>(stop - start);
-            // std::cout << "RDM Process Time " << duration_rdm_process.count() << " microseconds" << std::endl;
-	    
-	    frame ++;
-	    std::cout << "Frame: " << frame << std::endl;
+            auto stop = chrono::high_resolution_clock::now();
+            auto duration_rdm_process = duration_cast<microseconds>(stop - start);
+            std::cout << "RDM Process Time " << duration_rdm_process.count() << " microseconds" << std::endl;
         }
 
         private: 
-            float *adc_data_flat, *rdm_avg, *rdm_norm, *adc_data_reshaped, *cfar_cube, *angle_norm, *final_angle, *prev_rdm_avg, *zero_rdm_avg;
-            std::complex<float> *rdm_data, *adc_data, *angle_data, *angfft_data;
-            fftwf_plan plan, plan2;
-	    int *cfar_max;
+            int FAST_TIME, SLOW_TIME, RX, TX, IQ, SIZE_W_IQ, SIZE;
+            float *adc_data_flat, *rdm_avg, *rdm_norm, *adc_data_reshaped;
+            std::complex<float> *rdm_data, *adc_data;
+            fftwf_plan plan;
             uint16_t* input;
             const char *WINDOW_TYPE;
-            bool SET_SNR;
-            float max,min;
         
 };
 
@@ -807,18 +498,29 @@ class RangeDoppler : public RadarBlock
 class DataAcquisition : public RadarBlock
 { 
     public:
-        DataAcquisition() : RadarBlock(SIZE,SIZE)
+        DataAcquisition(int buffer_size, int port, int bytes_in_packet, int fast_time, int slow_time, int rx, int tx, int iq_data, int iq_bytes) : RadarBlock(fast_time*slow_time,fast_time*slow_time)
         {
-            
+            BUFFER_SIZE = buffer_size; 
+            PORT = port;
+            BYTES_IN_PACKET = bytes_in_packet;
+            RX = rx;
+            TX = tx;
+            FAST_TIME = fast_time;
+            SLOW_TIME = slow_time;
+            IQ_DATA = iq_data;
+            IQ_BYTES = iq_bytes;
+            SIZE_W_IQ = TX*RX*IQ_DATA*SLOW_TIME*FAST_TIME;
             frame_data = reinterpret_cast<uint16_t*>(malloc(SIZE_W_IQ*sizeof(uint16_t)));
-            BYTES_IN_FRAME = SLOW_TIME*FAST_TIME*RX*TX*IQ*IQ_BYTES;
+            BYTES_IN_FRAME = SLOW_TIME*FAST_TIME*RX*TX*IQ_DATA*IQ_BYTES;
             BYTES_IN_FRAME_CLIPPED = BYTES_IN_FRAME/BYTES_IN_PACKET*BYTES_IN_PACKET;
             PACKETS_IN_FRAME_CLIPPED = BYTES_IN_FRAME / BYTES_IN_PACKET;
             UINT16_IN_PACKET = BYTES_IN_PACKET / 2; //728 entries in packet
             UINT16_IN_FRAME = BYTES_IN_FRAME / 2;
             packets_read = 0;
             buffer=reinterpret_cast<char*>(malloc(BUFFER_SIZE*sizeof(char)));
-            packet_data=reinterpret_cast<uint16_t*>(malloc(UINT16_IN_PACKET*sizeof(uint16_t)));     
+            packet_data=reinterpret_cast<uint16_t*>(malloc(UINT16_IN_PACKET*sizeof(uint16_t)));
+
+            
         }
 
         // create_bind_socket - returns a socket object titled sockfd
@@ -861,15 +563,15 @@ class DataAcquisition : public RadarBlock
 
             n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&cliaddr, &len);
             buffer[n] = '\0'; // Null-terminate the buffer
-            // auto stop = chrono::high_resolution_clock::now();
-            // auto duration_read_socket = duration_cast<microseconds>(stop - start);
-            // std::cout << "Read Socket " << duration_read_socket.count() << std::endl;
+            auto stop = chrono::high_resolution_clock::now();
+            auto duration_read_socket = duration_cast<microseconds>(stop - start);
+            std::cout << "Read Socket " << duration_read_socket.count() << std::endl;
 
-            // start = chrono::high_resolution_clock::now();
+            start = chrono::high_resolution_clock::now();
 
-            // stop = chrono::high_resolution_clock::now();
-            // auto duration_set_packet_data = duration_cast<microseconds>(stop - start);
-            // std::cout << "Set Packet Data " << duration_set_packet_data.count() << std::endl;
+            stop = chrono::high_resolution_clock::now();
+            auto duration_set_packet_data = duration_cast<microseconds>(stop - start);
+            std::cout << "Set Packet Data " << duration_set_packet_data.count() << std::endl;
         }
 
         // get_packet_num will look at the buffer and return the packet number
@@ -954,9 +656,12 @@ class DataAcquisition : public RadarBlock
         {
 
             auto start = chrono::high_resolution_clock::now();
-
+            // create buffer array of preset size to hold one packet
+            // buffer[BUFFER_SIZE];
             create_bind_socket();
             
+            //auto duration_read_socket = duration_cast<microseconds>(stop - start);
+            //auto duration_set_frame_data = duration_cast<microseconds>(stop - start);
 
             // while true loop to get a single frame of data from UDP 
             // std::cout<< "DAQ PROCESS ACTIVATED" << std::endl;
@@ -964,15 +669,29 @@ class DataAcquisition : public RadarBlock
             //start = chrono::high_resolution_clock::now();
             while (true)
                 {
-                    read_socket();
-                    //start = chrono::high_resolution_clock::now();
-                    set_frame_data();
-                    //stop = chrono::high_resolution_clock::now();
-                    //duration_set_frame_data = duration_cast<microseconds>(stop - start);
-                    //std::cout << "Set Frame Data " << duration_set_frame_data.count() << std::endl;
-                    //std::cout << std::endl;   
+                    //std::cout << "Packet Num " << get_packet_num() << std::endl;  //optional 
+                    //rc = poll();
+                    //if (rv == 1)
+                    //{
+                        read_socket();
+                        //start = chrono::high_resolution_clock::now();
+                        set_frame_data();
+                        //stop = chrono::high_resolution_clock::now();
+                        //duration_set_frame_data = duration_cast<microseconds>(stop - start);
+                        //std::cout << "Set Frame Data " << duration_set_frame_data.count() << std::endl;
+                        //std::cout << std::endl;   
+                    //}
+                    // get_byte_count();  //optional
  
                     if (end_of_frame() == 1){
+                        // printf("End of frame found \n");
+                        // printf("IN DAQ: First data in frame = %d \n", frame_data[100]);
+                        //  for(int i = 91; i<110; i++){
+                        //     std::cout<< frame_data[i] << std::endl;
+                        // }
+                        //stop = chrono::high_resolution_clock::now();
+                        //auto duration_read_write_frame = duration_cast<microseconds>(stop - start);
+
                         //string str = ("./out") + to_string(frame) + ".txt";
                         // save_1d_array(frame_data, FAST_TIME*TX*RX*IQ_DATA, SLOW_TIME, str);
                         packets_read = 0;
@@ -983,6 +702,13 @@ class DataAcquisition : public RadarBlock
                         //stop = chrono::high_resolution_clock::now();
                         //auto duration_close_socket = duration_cast<microseconds>(stop - start);
 
+
+                        //std::cout << "Create Socket " << duration_create_socket.count() << std::endl;
+                        //std::cout << std::endl;
+                        //std::cout << "Read/Write Frame " << duration_read_write_frame.count() << std::endl;
+                        //std::cout << std::endl;
+                        //std::cout << "Close Socket " << duration_close_socket.count() << std::endl;
+                        //std::cout << std::endl;
                         break;
                     }
                 }
@@ -1002,7 +728,8 @@ class DataAcquisition : public RadarBlock
 
         }
 
-        private:  
+        private: 
+            int BUFFER_SIZE, PORT, BYTES_IN_PACKET, RX, TX, FAST_TIME, SLOW_TIME, IQ_DATA, IQ_BYTES, SIZE_W_IQ; 
             
             int sockfd;                             // socket file descriptor
             struct sockaddr_in servaddr, cliaddr;   // initialize socket
@@ -1019,4 +746,187 @@ class DataAcquisition : public RadarBlock
             float *adc_data_flat, *rdm_avg, *rdm_norm, *adc_data_reshaped;
             
         
+};
+class ObjectDetector 
+{
+public:
+    ObjectDetector(const string& modelPath, const string& classListPath) {
+        // Load class list.
+        ifstream ifs(classListPath);
+        string line;
+        while (getline(ifs, line)) {
+            class_list.push_back(line);
+        }
+
+        // Load model.
+        net = readNet(modelPath);
+
+        // Initialize video capture.
+        cap.open("nvarguscamerasrc ! video/x-raw(memory:NVMM), width=(int)1280, height=(int)720,format=(string)NV12, framerate=(fraction)21/1 ! nvvidconv ! video/x-raw, format=(string)BGRx ! videoconvert ! appsink");
+        if (!cap.isOpened()) {
+            cerr << "ERROR! Unable to open camera\n";
+            throw runtime_error("Unable to open camera");
+        }
+
+        namedWindow("Live", WINDOW_NORMAL);
+    }
+
+    void process_frame() {
+        auto start = chrono::high_resolution_clock::now();
+
+        // Wait for a new frame from camera and store it into 'frame1'.
+        cap.read(frame1);
+        frame2 = frame1;
+
+        // Check if we succeeded.
+        if (frame1.empty()) {
+            cerr << "ERROR! blank frame grabbed\n";
+            return;
+        }
+
+        vector<Mat> detections = pre_process(frame1);
+        Mat img = post_process(frame2, detections);
+
+        // Put efficiency information.
+        vector<double> layersTimes;
+        double freq = getTickFrequency() / 1000;
+        double t = net.getPerfProfile(layersTimes) / freq;
+        string label = format("Inference time : %.2f ms", t);
+        putText(img, label, Point(20, 40), FONT_FACE, FONT_SCALE, RED);
+
+        // Show the processed frame.
+        imshow("Live", img);
+
+        auto stop = chrono::high_resolution_clock::now();
+        auto duration = chrono::duration_cast<chrono::microseconds>(stop - start);
+        cout << "Process Time: " << duration.count() << " microseconds" << endl;
+
+        waitKey(0); // Wait indefinitely for a key press
+    }
+    void draw_label(Mat& input_image, string label, int left, int top) {
+        // Display the label at the top of the bounding box.
+        int baseLine;
+        Size label_size = getTextSize(label, FONT_FACE, FONT_SCALE, THICKNESS, &baseLine);
+        top = max(top, label_size.height);
+        // Top left corner.
+        Point tlc = Point(left, top);
+        // Bottom right corner.
+        Point brc = Point(left + label_size.width, top + label_size.height + baseLine);
+        // Draw black rectangle.
+        rectangle(input_image, tlc, brc, BLACK, FILLED);
+        // Put the label on the black rectangle.
+        putText(input_image, label, Point(left, top + label_size.height), FONT_FACE, FONT_SCALE, YELLOW, THICKNESS);
+    }
+
+    vector<Mat> pre_process(Mat& input_image) {
+        // Convert to blob.
+        Mat blob;
+        blobFromImage(input_image, blob, 1. / 255., Size(INPUT_WIDTH, INPUT_HEIGHT), Scalar(), true, false);
+
+        net.setInput(blob);
+
+        // Forward propagate.
+        vector<Mat> outputs;
+        net.forward(outputs, net.getUnconnectedOutLayersNames());
+
+        return outputs;
+    }
+
+    Mat post_process(Mat& input_image, vector<Mat>& outputs) {
+        // Initialize vectors to hold respective outputs while unwrapping detections.
+        vector<int> class_ids;
+        vector<float> confidences;
+        vector<Rect> boxes;
+
+        // Resizing factor.
+        float x_factor = input_image.cols / INPUT_WIDTH;
+        float y_factor = input_image.rows / INPUT_HEIGHT;
+
+        float* data = (float*)outputs[0].data;
+
+        const int dimensions = 85;
+        const int rows = 25200;
+        // Iterate through 25200 detections.
+        for (int i = 0; i < rows; ++i) {
+            float confidence = data[4];
+            // Discard bad detections and continue.
+            if (confidence >= CONFIDENCE_THRESHOLD) {
+                float* classes_scores = data + 5;
+                // Create a 1x85 Mat and store class scores of 80 classes.
+                Mat scores(1, class_list.size(), CV_32FC1, classes_scores);
+                // Perform minMaxLoc and acquire index of best class score.
+                Point class_id;
+                double max_class_score;
+                minMaxLoc(scores, 0, &max_class_score, 0, &class_id);
+                // Continue if the class score is above the threshold.
+                if (max_class_score > SCORE_THRESHOLD) {
+                    // Store class ID and confidence in the pre-defined respective vectors.
+                    confidences.push_back(confidence);
+                    class_ids.push_back(class_id.x);
+
+                    // Center.
+                    float cx = data[0];
+                    float cy = data[1];
+                    // Box dimension.
+                    float w = data[2];
+                    float h = data[3];
+                    // Bounding box coordinates.
+                    int left = int((cx - 0.5 * w) * x_factor);
+                    int top = int((cy - 0.5 * h) * y_factor);
+                    int width = int(w * x_factor);
+                    int height = int(h * y_factor);
+                    // Store good detections in the boxes vector.
+                    boxes.push_back(Rect(left, top, width, height));
+                }
+            }
+            // Jump to the next column.
+            data += 85;
+        }
+
+        // Perform Non Maximum Suppression and draw predictions.
+        vector<int> indices;
+        NMSBoxes(boxes, confidences, SCORE_THRESHOLD, NMS_THRESHOLD, indices);
+        for (int i = 0; i < indices.size(); i++) {
+            int idx = indices[i];
+            Rect box = boxes[idx];
+
+            int left = box.x;
+            int top = box.y;
+            int width = box.width;
+            int height = box.height;
+            // Draw bounding box.
+            rectangle(input_image, Point(left, top), Point(left + width, top + height), BLUE, 3 * THICKNESS);
+
+            // Get the label for the class name and its confidence.
+            string label = format("%.2f", confidences[idx]);
+            label = class_list[class_ids[idx]] + ":" + label;
+            // Draw class labels.
+            draw_label(input_image, label, left, top);
+        }
+        return input_image;
+    }
+
+private:
+    // Constants
+    const float INPUT_WIDTH = 640.0;
+    const float INPUT_HEIGHT = 640.0;
+    const float SCORE_THRESHOLD = 0.5;
+    const float NMS_THRESHOLD = 0.45;
+    const float CONFIDENCE_THRESHOLD = 0.45;
+
+    const float FONT_SCALE = 0.7;
+    const int FONT_FACE = FONT_HERSHEY_SIMPLEX;
+    const int THICKNESS = 1;
+
+    // Colors
+    Scalar BLACK = Scalar(0, 0, 0);
+    Scalar BLUE = Scalar(255, 178, 50);
+    Scalar YELLOW = Scalar(0, 255, 255);
+    Scalar RED = Scalar(0, 0, 255);
+
+    // Data members
+    vector<string> class_list;
+    Net net;
+    Mat frame, frame1, frame2;
+    VideoCapture cap;
 };

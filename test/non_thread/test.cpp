@@ -49,6 +49,7 @@ int main(int argc, char* argv[])
     }
 */
 
-
+    ObjectDetector detector("yolov5s.onnx", "coco.names");
+    detector.process_frame();
     return 0;
 }
